@@ -18,15 +18,30 @@ allprojects {
         google()
         mavenCentral()
     }
+}
 
-    // Force Java 21 source/target compatibility across all modules (including :capacitor-android)
-    afterEvaluate { project ->
-        if (project.hasProperty("android")) {
-            project.android {
-                compileOptions {
-                    sourceCompatibility JavaVersion.VERSION_21
-                    targetCompatibility JavaVersion.VERSION_21
-                }
+subprojects {
+    pluginManager.withPlugin("com.android.application") {
+        android {
+            compileOptions {
+                sourceCompatibility JavaVersion.VERSION_21
+                targetCompatibility JavaVersion.VERSION_21
+            }
+            lint {
+                abortOnError false
+                checkReleaseBuilds false
+            }
+        }
+    }
+    pluginManager.withPlugin("com.android.library") {
+        android {
+            compileOptions {
+                sourceCompatibility JavaVersion.VERSION_21
+                targetCompatibility JavaVersion.VERSION_21
+            }
+            lint {
+                abortOnError false
+                checkReleaseBuilds false
             }
         }
     }

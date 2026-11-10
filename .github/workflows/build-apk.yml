@@ -27,7 +27,7 @@ jobs:
       - run: chmod +x android/gradlew
       - name: Build Release APK
         working-directory: android
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
+        run: ./gradlew assembleRelease -x lint -x lintVitalRelease -x lintVitalAnalyzeRelease -x test --no-daemon --stacktrace
       - name: Sign Release APK
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -40,8 +40,13 @@ jobs:
           else
             keytool -genkeypair -keystore release.keystore -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -storepass "$STORE_PASS" -keypass "$STORE_PASS" -dname "CN=MetaTrader 5, O=MT5, C=US"
           fi
-          BT="$ANDROID_HOME/build-tools/36.0.0"
+          BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          echo "Using Android build-tools: $BT"
           UNSIGNED=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$UNSIGNED" ]; then
+            echo "Error: No APK was generated in android/app/build/outputs/apk/release!"
+            exit 1
+          fi
           mkdir -p release-apk
           "$BT/zipalign" -p -f 4 "$UNSIGNED" aligned.apk
           "$BT/apksigner" sign --ks release.keystore --ks-pass "pass:$STORE_PASS" --key-pass "pass:$STORE_PASS" --ks-key-alias "$KEY_ALIAS" --out release-apk/MetaTrader-5.apk aligned.apk

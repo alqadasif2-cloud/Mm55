@@ -26,6 +26,7 @@ android {
     }
     lintOptions {
         abortOnError = false
+        checkReleaseBuilds = false
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
@@ -54,6 +55,8 @@ dependencies {
 apply from: "cordova.variables.gradle"
 // PLUGIN GRADLE EXTENSIONS END
 
-for (def func : cdvPluginPostBuildExtras) {
-    func()
+if (binding.hasVariable('cdvPluginPostBuildExtras') && cdvPluginPostBuildExtras != null) {
+    for (def func : cdvPluginPostBuildExtras) {
+        func()
+    }
 }

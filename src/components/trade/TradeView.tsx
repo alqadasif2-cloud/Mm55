@@ -47,7 +47,11 @@ export const TradeView: React.FC = () => {
     setSortAsc(!sortAsc);
   };
 
-  const sortedPositions = [...positions].sort((a, b) => {
+  const accountPositions = positions.filter(
+    (p) => !p.accountId || p.accountId === activeAccount.id
+  );
+
+  const sortedPositions = [...accountPositions].sort((a, b) => {
     if (sortBy === 'profit') {
       return sortAsc ? a.profit - b.profit : b.profit - a.profit;
     }
@@ -198,7 +202,7 @@ export const TradeView: React.FC = () => {
 
       {/* 3. Open Positions List Area */}
       <div className="flex-1 overflow-y-auto divide-y divide-[#14161a] bg-[#000000] scrollbar-thin">
-        {positions.length === 0 ? (
+        {sortedPositions.length === 0 ? (
           /* Pure clean canvas when no open positions, matching Screenshot_20261110131254_b40a6616.jpg */
           <div className="h-full w-full bg-[#000000]"></div>
         ) : (

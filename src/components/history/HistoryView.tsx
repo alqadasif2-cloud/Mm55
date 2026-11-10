@@ -62,12 +62,40 @@ export const HistoryView: React.FC = () => {
     }
 
     // 2. Period / Date Filter
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, '0')}.${String(now.getDate()).padStart(2, '0')}`;
+
     if (filterPeriod === 'custom' && customSelectedDate) {
       list = list.filter((d) => d.closeTime && d.closeTime.startsWith(customSelectedDate));
     } else if (filterPeriod === 'today') {
-      // Latest deal date or today's date
-      const todayStr = '2026.11.10';
-      list = list.filter((d) => d.closeTime && (d.closeTime.startsWith(todayStr) || d.closeTime.startsWith('2024.11.10')));
+      list = list.filter((d) => d.closeTime && (d.closeTime.startsWith(todayStr) || d.closeTime.startsWith('2026.11.10') || d.closeTime.startsWith('2024.11.10')));
+    } else if (filterPeriod === 'week') {
+      const oneWeekAgo = new Date();
+      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+      list = list.filter((d) => {
+        if (!d.closeTime) return false;
+        const [datePart] = d.closeTime.split(' ');
+        const [y, m, day] = datePart.split('.').map(Number);
+        return new Date(y, (m || 1) - 1, day || 1) >= oneWeekAgo;
+      });
+    } else if (filterPeriod === 'month') {
+      const oneMonthAgo = new Date();
+      oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+      list = list.filter((d) => {
+        if (!d.closeTime) return false;
+        const [datePart] = d.closeTime.split(' ');
+        const [y, m, day] = datePart.split('.').map(Number);
+        return new Date(y, (m || 1) - 1, day || 1) >= oneMonthAgo;
+      });
+    } else if (filterPeriod === '3months') {
+      const threeMonthsAgo = new Date();
+      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+      list = list.filter((d) => {
+        if (!d.closeTime) return false;
+        const [datePart] = d.closeTime.split(' ');
+        const [y, m, day] = datePart.split('.').map(Number);
+        return new Date(y, (m || 1) - 1, day || 1) >= threeMonthsAgo;
+      });
     }
 
     return list;
@@ -511,26 +539,34 @@ export const HistoryView: React.FC = () => {
                           )}
                         </div>
 
-                        {/* Left: Timestamp and Amount in BLUE for deposits or profit, RED for loss */}
+                        {/* Left: Timestamp and Amount in BLUE for deposits or profit, RED for loss, or Filled status for Orders */}
                         <div className="text-left" dir="ltr">
-                          <div
-                            className={`text-base font-extrabold tabular-nums tracking-tight ${
-                              isDeposit
-                                ? 'text-[#2196f3]'
+                          {activeSubTab === 'orders' && !isDeposit ? (
+                            <div className="text-right">
+                              <span className="inline-block px-2 py-0.5 rounded text-[11px] font-bold bg-[#1b5e20]/50 text-[#81c784] border border-[#2e7d32]/60">
+                                مُنفَّذ (Filled)
+                              </span>
+                            </div>
+                          ) : (
+                            <div
+                              className={`text-base font-extrabold tabular-nums tracking-tight ${
+                                isDeposit
+                                  ? 'text-[#2196f3]'
+                                  : deal.profit >= 0
+                                  ? 'text-[#2196f3]'
+                                  : 'text-[#ef5350]'
+                              }`}
+                            >
+                              {isDeposit
+                                ? deal.profit.toLocaleString('en-US', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2
+                                  })
                                 : deal.profit >= 0
-                                ? 'text-[#2196f3]'
-                                : 'text-[#ef5350]'
-                            }`}
-                          >
-                            {isDeposit
-                              ? deal.profit.toLocaleString('en-US', {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2
-                                })
-                              : deal.profit >= 0
-                              ? deal.profit.toFixed(2)
-                              : deal.profit.toFixed(2)}
-                          </div>
+                                ? deal.profit.toFixed(2)
+                                : deal.profit.toFixed(2)}
+                            </div>
+                          )}
                           <div className="text-[10px] text-[#8e9aa8] mt-0.5 tabular-nums">
                             {deal.closeTime}
                           </div>

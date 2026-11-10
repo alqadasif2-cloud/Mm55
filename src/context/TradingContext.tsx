@@ -303,7 +303,18 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
   // Initial tab matches user request and screenshot
   const [activeTab, setActiveTab] = useState<TabType>('accounts');
   const [timeframe, setTimeframe] = useState<Timeframe>('M15');
-  const [positions, setPositions] = useState<Position[]>(INITIAL_POSITIONS);
+  const [positions, setPositions] = useState<Position[]>(() => {
+    try {
+      const saved = localStorage.getItem('mt5_positions');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn('Failed to load positions from localStorage', e);
+    }
+    return INITIAL_POSITIONS;
+  });
 
   const [historyDeals, setHistoryDeals] = useState<Deal[]>(() => {
     try {
@@ -424,6 +435,46 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
       console.warn('Failed to save history deals to localStorage', e);
     }
   }, [historyDeals]);
+
+  // Persist open positions to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('mt5_positions', JSON.stringify(positions));
+    } catch (e) {
+      console.warn('Failed to save positions to localStorage', e);
+    }
+  }, [positions]);
+
+  // Save all critical states reliably on mobile app hide / close / beforeunload
+  useEffect(() => {
+    const saveAllState = () => {
+      try {
+        localStorage.setItem('mt5_positions', JSON.stringify(positions));
+        localStorage.setItem('mt5_history_deals', JSON.stringify(historyDeals));
+        localStorage.setItem('mt5_accounts', JSON.stringify(accounts));
+        if (activeAccount?.id) {
+          localStorage.setItem('mt5_active_account_id', activeAccount.id);
+        }
+      } catch (e) {
+        console.warn('Failed to save state on app hide', e);
+      }
+    };
+
+    window.addEventListener('beforeunload', saveAllState);
+    window.addEventListener('pagehide', saveAllState);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        saveAllState();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('beforeunload', saveAllState);
+      window.removeEventListener('pagehide', saveAllState);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [positions, historyDeals, accounts, activeAccount]);
 
   const [messages, setMessages] = useState<MessageItem[]>(INITIAL_MESSAGES);
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
@@ -720,14 +771,17 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
     );
   }, [quotes]);
 
-  // Financial calculations
-  const totalProfit = positions.reduce((sum, p) => sum + p.profit, 0);
+  // Financial calculations scoped to active account
+  const accountPositions = positions.filter(
+    (p) => !p.accountId || p.accountId === activeAccount.id
+  );
+  const totalProfit = accountPositions.reduce((sum, p) => sum + p.profit, 0);
   const equity = parseFloat((activeAccount.balance + totalProfit).toFixed(2));
   
   // Calculate margin used (assuming 1:2000 leverage for Real Exness, 1:100 for Demo)
   const leverageRatio = activeAccount.leverage === '1:2000' ? 2000 : 100;
   const margin = parseFloat(
-    positions
+    accountPositions
       .reduce((sum, p) => {
         const notional =
           p.symbol === 'XAUUSD'
@@ -769,13 +823,20 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
         swap: 0,
         commission,
         profit: commission, // initially minus commission
-        openTime
+        openTime,
+        accountId: activeAccount.id
       };
 
-      setPositions((prev) => [newPos, ...prev]);
+      setPositions((prev) => {
+        const updated = [newPos, ...prev];
+        try {
+          localStorage.setItem('mt5_positions', JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
       return true;
     },
-    [quotes]
+    [quotes, activeAccount.id]
   );
 
   // Close position and record deal in history
@@ -806,20 +867,36 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
         comment: ''
       };
 
-      // Add to history
-      setHistoryDeals((prev) => [newDeal, ...prev]);
+      // Add to history and persist immediately
+      setHistoryDeals((prev) => {
+        const updated = [newDeal, ...prev];
+        try {
+          localStorage.setItem('mt5_history_deals', JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
 
-      // Remove from active positions
-      setPositions((prev) => prev.filter((p) => p.id !== positionId));
+      // Remove from active positions and persist immediately
+      setPositions((prev) => {
+        const updated = prev.filter((p) => p.id !== positionId);
+        try {
+          localStorage.setItem('mt5_positions', JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
 
-      // Update active account balance
+      // Update active account balance and persist immediately
       setActiveAccountState((prev) => {
         const newBalance = parseFloat((prev.balance + pos.profit).toFixed(2));
         const updated = { ...prev, balance: newBalance };
         // Sync in accounts list
-        setAccounts((accs) =>
-          accs.map((a) => (a.id === updated.id ? updated : a))
-        );
+        setAccounts((accs) => {
+          const updatedAccs = accs.map((a) => (a.id === updated.id ? updated : a));
+          try {
+            localStorage.setItem('mt5_accounts', JSON.stringify(updatedAccs));
+          } catch {}
+          return updatedAccs;
+        });
         return updated;
       });
     },
@@ -828,9 +905,13 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   // Modify SL / TP
   const modifyPosition = useCallback((positionId: string, sl?: number, tp?: number) => {
-    setPositions((prev) =>
-      prev.map((p) => (p.id === positionId ? { ...p, sl, tp } : p))
-    );
+    setPositions((prev) => {
+      const updated = prev.map((p) => (p.id === positionId ? { ...p, sl, tp } : p));
+      try {
+        localStorage.setItem('mt5_positions', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
   }, []);
 
   const markMessageAsRead = (id: string) => {

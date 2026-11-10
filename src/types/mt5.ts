@@ -55,6 +55,7 @@ export interface Position {
   commission: number;
   profit: number;
   openTime: string;
+  accountId?: string;
 }
 
 export interface Deal {

@@ -34,11 +34,9 @@ export const HistoryView: React.FC = () => {
 
   const arabicWeekDays = ['أحد', 'إثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت'];
 
-  // Deals belonging to the active account
+  // Deals belonging strictly to the active account
   const accountDeals = useMemo(() => {
-    return historyDeals.filter(
-      (d) => !d.accountId || d.accountId === activeAccount.id
-    );
+    return historyDeals.filter((d) => d.accountId === activeAccount.id);
   }, [historyDeals, activeAccount.id]);
 
   // Set of dates that have deals in this account

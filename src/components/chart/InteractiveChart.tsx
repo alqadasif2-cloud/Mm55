@@ -102,7 +102,12 @@ export const InteractiveChart: React.FC = () => {
       timeframe === 'M15' ? 900000 :
       timeframe === 'M30' ? 1800000 : 3600000;
 
-    let prevClose = basePrice + (selectedSymbol === 'USOIL' ? 1.5 : 30);
+    const offset =
+      selectedSymbol === 'USOIL' ? 0.8 :
+      selectedSymbol === 'XAGUSD' ? 0.25 :
+      selectedSymbol === 'XAUUSD' ? 15 :
+      selectedSymbol === 'BTCUSD' ? 350 : (basePrice * 0.003);
+    let prevClose = basePrice + offset;
 
     for (let i = 50; i >= 0; i--) {
       const time = now - i * intervalMs;

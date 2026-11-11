@@ -47,9 +47,7 @@ export const TradeView: React.FC = () => {
     setSortAsc(!sortAsc);
   };
 
-  const accountPositions = positions.filter(
-    (p) => !p.accountId || p.accountId === activeAccount.id
-  );
+  const accountPositions = positions.filter((p) => p.accountId === activeAccount.id);
 
   const sortedPositions = [...accountPositions].sort((a, b) => {
     if (sortBy === 'profit') {
@@ -163,8 +161,8 @@ export const TradeView: React.FC = () => {
           </span>
         </div>
 
-        {/* Dynamic Margin rows if open positions exist */}
-        {positions.length > 0 && (
+        {/* Dynamic Margin rows if open positions exist for this account */}
+        {accountPositions.length > 0 && (
           <>
             <div className="flex items-baseline justify-between text-[13px]">
               <span className="font-normal text-white shrink-0">الهامش:</span>

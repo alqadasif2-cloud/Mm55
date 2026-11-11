@@ -1,5 +1,23 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { Account, SymbolQuote, Position, Deal, MessageItem, TabType, Timeframe } from '../types/mt5';
+import {
+  db,
+  auth,
+  loginWithGoogle,
+  logoutUser,
+  handleFirestoreError,
+  OperationType,
+  testFirestoreConnection
+} from '../firebase';
+import {
+  collection,
+  doc,
+  setDoc,
+  deleteDoc,
+  onSnapshot,
+  getDocs
+} from 'firebase/firestore';
+import { onAuthStateChanged, User } from 'firebase/auth';
 
 interface TradingContextType {
   activeAccount: Account;
@@ -41,6 +59,11 @@ interface TradingContextType {
   addNewAccount: (account: Partial<Account>) => void;
   deleteAccount: (accountId: string) => void;
   isBinanceConnected: boolean;
+  currentUser: User | null;
+  isAuthReady: boolean;
+  isCloudSynced: boolean;
+  signInWithGoogle: () => Promise<void>;
+  signOutUser: () => Promise<void>;
 }
 
 const INITIAL_ACCOUNTS: Account[] = [
@@ -90,43 +113,43 @@ const INITIAL_QUOTES: SymbolQuote[] = [
     symbol: 'XAUUSD',
     name: 'الذهب مقابل الدولار الأمريكي',
     digits: 2,
-    bid: 4132.77,
-    ask: 4132.97,
+    bid: 4053.40,
+    ask: 4053.60,
     spread: 20,
-    high: 4133.60,
-    low: 4054.85,
+    high: 4085.00,
+    low: 4038.00,
     time: '15:58:22',
-    change: 1.64,
+    change: 0.57,
     category: 'metals',
-    source: 'Twelve Data API'
+    source: 'COMEX Live'
   },
   {
     symbol: 'XAGUSD',
     name: 'الفضة مقابل الدولار الأمريكي',
     digits: 3,
-    bid: 46.870,
-    ask: 46.885,
+    bid: 52.375,
+    ask: 52.390,
     spread: 15,
-    high: 47.130,
-    low: 46.340,
+    high: 53.150,
+    low: 51.820,
     time: '15:58:22',
-    change: -0.13,
+    change: 2.24,
     category: 'metals',
-    source: 'Twelve Data API'
+    source: 'COMEX Live'
   },
   {
     symbol: 'USOIL',
     name: 'نفط خام غرب تكساس (WTI Crude Oil)',
     digits: 2,
-    bid: 71.42,
-    ask: 71.45,
+    bid: 86.68,
+    ask: 86.71,
     spread: 3,
-    high: 72.30,
-    low: 70.80,
+    high: 87.80,
+    low: 85.90,
     time: '15:58:25',
-    change: 0.85,
+    change: 0.73,
     category: 'commodities',
-    source: 'WTI Realtime'
+    source: 'NYMEX Live'
   },
   {
     symbol: 'EURUSD',
@@ -138,38 +161,38 @@ const INITIAL_QUOTES: SymbolQuote[] = [
     high: 1.08740,
     low: 1.08210,
     time: '15:58:21',
-    change: -0.18,
+    change: -0.05,
     category: 'forex'
   },
   {
     symbol: 'GBPUSD',
     name: 'الجنيه الإسترليني مقابل الدولار',
     digits: 5,
-    bid: 1.27180,
-    ask: 1.27196,
-    spread: 16,
-    high: 1.27650,
-    low: 1.26890,
+    bid: 1.26780,
+    ask: 1.26795,
+    spread: 15,
+    high: 1.27150,
+    low: 1.26420,
     time: '15:58:19',
-    change: 0.32,
+    change: 0.18,
     category: 'forex'
   },
   {
     symbol: 'USDJPY',
     name: 'الدولار مقابل الين الياباني',
     digits: 3,
-    bid: 154.215,
-    ask: 154.229,
+    bid: 154.620,
+    ask: 154.634,
     spread: 14,
-    high: 154.800,
-    low: 153.750,
+    high: 155.200,
+    low: 154.100,
     time: '15:58:20',
-    change: 0.44,
+    change: 0.32,
     category: 'forex'
   },
   {
     symbol: 'BTCUSD',
-    name: 'البيتكوين مقابل الدولار (Binance)',
+    name: 'البيتكوين مقابل الدولار الأمريكي',
     digits: 2,
     bid: 67450.00,
     ask: 67475.00,
@@ -237,8 +260,6 @@ const INITIAL_QUOTES: SymbolQuote[] = [
 
 const INITIAL_POSITIONS: Position[] = [];
 
-const INITIAL_HISTORY: Deal[] = [];
-
 const INITIAL_MESSAGES: MessageItem[] = [
   {
     id: 'msg-1',
@@ -252,7 +273,7 @@ const INITIAL_MESSAGES: MessageItem[] = [
   {
     id: 'msg-2',
     title: 'تحليل فني: مستويات دعم ومقاومة الذهب XAUUSD',
-    content: 'يختبر الذهب حالياً مستوى 4106$ للأونصة مدعوماً بتوقعات خفض الفائدة. مستويات المقاومة التالية عند 4125$ والدعم عند 4090$.',
+    content: 'يختبر الذهب حالياً مستوى 4053$ للأونصة مدعوماً بتوقعات خفض الفائدة. مستويات المقاومة التالية عند 4085$ والدعم عند 4038$.',
     sender: 'MQL5 Financial News',
     time: 'منذ ساعتين',
     read: true,
@@ -269,10 +290,98 @@ const INITIAL_MESSAGES: MessageItem[] = [
   }
 ];
 
+const INITIAL_HISTORY: Deal[] = [
+  {
+    id: 'deal-trial-1',
+    ticket: 48920194,
+    symbol: 'USOIL',
+    type: 'buy',
+    lots: 0.01,
+    openPrice: 86.20,
+    closePrice: 84.24,
+    swap: 0,
+    commission: 0,
+    profit: -19.60,
+    openTime: '2024.11.10 13:10:00',
+    closeTime: '2024.11.10 13:42:15',
+    accountId: 'exness-trial-16',
+    comment: 'D-ALLINT-USD-INT-472970564-2'
+  },
+  {
+    id: 'deposit-trial-1',
+    ticket: 48920100,
+    symbol: 'Balance',
+    type: 'deposit',
+    lots: 0,
+    openPrice: 0,
+    closePrice: 0,
+    swap: 0,
+    commission: 0,
+    profit: 19.51,
+    openTime: '2024.11.10 12:45:01',
+    closeTime: '2024.11.10 12:45:01',
+    accountId: 'exness-trial-16',
+    comment: 'D-ALLINT-USD-INT-472970564-2'
+  },
+  {
+    id: 'deposit-real-33',
+    ticket: 10000001,
+    symbol: 'Balance',
+    type: 'deposit',
+    lots: 0,
+    openPrice: 0,
+    closePrice: 0,
+    swap: 0,
+    commission: 0,
+    profit: 0.00,
+    openTime: '2026.11.10 08:00:00',
+    closeTime: '2026.11.10 08:00:00',
+    accountId: 'exness-real-33',
+    comment: 'رصيد الحساب'
+  },
+  {
+    id: 'deal-demo-1',
+    ticket: 50574104,
+    symbol: 'XAUUSD',
+    type: 'buy',
+    lots: 1.00,
+    openPrice: 4093.22,
+    closePrice: 4061.40,
+    swap: 0,
+    commission: 0,
+    profit: -3181.98,
+    openTime: '2026.11.10 10:15:00',
+    closeTime: '2026.11.10 10:45:00',
+    accountId: 'metaquotes-demo',
+    comment: 'MetaTrader 5 Demo Trade'
+  },
+  {
+    id: 'deposit-demo-1',
+    ticket: 50574100,
+    symbol: 'Balance',
+    type: 'deposit',
+    lots: 0,
+    openPrice: 0,
+    closePrice: 0,
+    swap: 0,
+    commission: 0,
+    profit: 100000.00,
+    openTime: '2026.11.10 08:30:00',
+    closeTime: '2026.11.10 08:30:00',
+    accountId: 'metaquotes-demo',
+    comment: 'رصيد الحساب'
+  }
+];
+
 const TradingContext = createContext<TradingContextType | undefined>(undefined);
 
 export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Primary active account is the Exness Real 35 account under the name "اسلام" (First in list)
+  // 1. Firebase Auth state
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
+  const [isCloudSynced, setIsCloudSynced] = useState<boolean>(false);
+
+  // 2. Accounts state (persisted locally + cloud)
   const [accounts, setAccounts] = useState<Account[]>(() => {
     try {
       const saved = localStorage.getItem('mt5_accounts');
@@ -300,9 +409,10 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [quotes, setQuotes] = useState<SymbolQuote[]>(INITIAL_QUOTES);
   const [selectedSymbol, setSelectedSymbol] = useState<string>('XAUUSD');
   const [isBinanceConnected, setIsBinanceConnected] = useState<boolean>(false);
-  // Initial tab matches user request and screenshot
   const [activeTab, setActiveTab] = useState<TabType>('accounts');
   const [timeframe, setTimeframe] = useState<Timeframe>('M15');
+
+  // Positions and History
   const [positions, setPositions] = useState<Position[]>(() => {
     try {
       const saved = localStorage.getItem('mt5_positions');
@@ -310,9 +420,7 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) return parsed;
       }
-    } catch (e) {
-      console.warn('Failed to load positions from localStorage', e);
-    }
+    } catch {}
     return INITIAL_POSITIONS;
   });
 
@@ -324,98 +432,172 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     } catch {}
-    // Initial deposit record for the main account "اسلام"
-    return [
-      {
-        id: 'deal-trial-1',
-        ticket: 48920194,
-        symbol: 'USOIL',
-        type: 'buy',
-        lots: 0.01,
-        openPrice: 71.20,
-        closePrice: 69.24,
-        swap: 0,
-        commission: 0,
-        profit: -19.65,
-        openTime: '2024.11.10 13:10:00',
-        closeTime: '2024.11.10 13:42:15',
-        accountId: 'exness-trial-16',
-        comment: 'D-ALLINT-USD-INT-472970564-2'
-      },
-      {
-        id: 'deposit-trial-1',
-        ticket: 48920100,
-        symbol: 'Balance',
-        type: 'deposit',
-        lots: 0,
-        openPrice: 0,
-        closePrice: 0,
-        swap: 0,
-        commission: 0,
-        profit: 19.51,
-        openTime: '2024.11.10 12:45:01',
-        closeTime: '2024.11.10 12:45:01',
-        accountId: 'exness-trial-16',
-        comment: 'D-ALLINT-USD-INT-472970564-2'
-      },
-      {
-        id: 'deposit-real-33',
-        ticket: 10000001,
-        symbol: 'Balance',
-        type: 'deposit',
-        lots: 0,
-        openPrice: 0,
-        closePrice: 0,
-        swap: 0,
-        commission: 0,
-        profit: 0.00,
-        openTime: '2026.11.10 08:00:00',
-        closeTime: '2026.11.10 08:00:00',
-        accountId: 'exness-real-33',
-        comment: 'رصيد الحساب'
-      },
-      {
-        id: 'deal-demo-1',
-        ticket: 50574104,
-        symbol: 'XAUUSD',
-        type: 'buy',
-        lots: 1.00,
-        openPrice: 4093.22,
-        closePrice: 4061.40,
-        swap: 0,
-        commission: 0,
-        profit: -3181.98,
-        openTime: '2026.11.10 10:15:00',
-        closeTime: '2026.11.10 10:45:00',
-        accountId: 'metaquotes-demo',
-        comment: 'MetaTrader 5 Demo Trade'
-      },
-      {
-        id: 'deposit-demo-1',
-        ticket: 50574100,
-        symbol: 'Balance',
-        type: 'deposit',
-        lots: 0,
-        openPrice: 0,
-        closePrice: 0,
-        swap: 0,
-        commission: 0,
-        profit: 100000.00,
-        openTime: '2026.11.10 08:30:00',
-        closeTime: '2026.11.10 08:30:00',
-        accountId: 'metaquotes-demo',
-        comment: 'رصيد الحساب'
-      }
-    ];
+    return INITIAL_HISTORY;
   });
 
-  // Persist to localStorage whenever accounts, activeAccount, or historyDeals change
+  // UI state
+  const [messages, setMessages] = useState<MessageItem[]>(INITIAL_MESSAGES);
+  const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
+  const [isSimulatorFrame, setIsSimulatorFrame] = useState<boolean>(false);
+  const [orderModalSymbol, setOrderModalSymbol] = useState<string | null>(null);
+  const [accountInfoModalOpen, setAccountInfoModalOpen] = useState<boolean>(false);
+  const [otpModalOpen, setOtpModalOpen] = useState<boolean>(false);
+  const [addAccountModalOpen, setAddAccountModalOpen] = useState<boolean>(false);
+
+  // Validate Firestore connection on boot
+  useEffect(() => {
+    testFirestoreConnection();
+  }, []);
+
+  // Listen to Firebase Auth state
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      setIsAuthReady(true);
+      if (user) {
+        setIsCloudSynced(true);
+      } else {
+        setIsCloudSynced(false);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Sync accounts with Firestore when user logs in
+  useEffect(() => {
+    if (!currentUser) return;
+    const userId = currentUser.uid;
+    const accountsPath = `users/${userId}/accounts`;
+
+    let isMounted = true;
+    const accountsColRef = collection(db, 'users', userId, 'accounts');
+
+    // Initial check: if Firestore has no accounts for this user yet, seed initial accounts
+    getDocs(accountsColRef)
+      .then((snap) => {
+        if (!isMounted) return;
+        if (snap.empty) {
+          // Upload local accounts to Firestore
+          accounts.forEach((acc) => {
+            const accDocRef = doc(db, 'users', userId, 'accounts', acc.id);
+            setDoc(accDocRef, {
+              ...acc,
+              userId
+            }).catch((err) => handleFirestoreError(err, OperationType.WRITE, `${accountsPath}/${acc.id}`));
+          });
+        }
+      })
+      .catch((err) => {
+        handleFirestoreError(err, OperationType.LIST, accountsPath);
+      });
+
+    // Real-time listener for user's accounts
+    const unsub = onSnapshot(
+      accountsColRef,
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const remoteAccounts: Account[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as Account;
+            remoteAccounts.push(data);
+          });
+          setAccounts(remoteAccounts);
+          try {
+            localStorage.setItem('mt5_accounts', JSON.stringify(remoteAccounts));
+          } catch {}
+
+          // Ensure active account is synced
+          setActiveAccountState((prev) => {
+            const matched = remoteAccounts.find((a) => a.id === prev.id);
+            return matched || remoteAccounts[0];
+          });
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, accountsPath);
+      }
+    );
+
+    return () => {
+      isMounted = false;
+      unsub();
+    };
+  }, [currentUser]);
+
+  // Sync positions for active account from Firestore
+  useEffect(() => {
+    if (!currentUser || !activeAccount?.id) return;
+    const userId = currentUser.uid;
+    const accountId = activeAccount.id;
+    const posPath = `users/${userId}/accounts/${accountId}/positions`;
+    const posColRef = collection(db, 'users', userId, 'accounts', accountId, 'positions');
+
+    const unsub = onSnapshot(
+      posColRef,
+      (snapshot) => {
+        const remotePositions: Position[] = [];
+        snapshot.forEach((docSnap) => {
+          remotePositions.push(docSnap.data() as Position);
+        });
+
+        // Merge with existing positions for other accounts
+        setPositions((prev) => {
+          const otherPositions = prev.filter((p) => p.accountId && p.accountId !== accountId);
+          const combined = [...remotePositions, ...otherPositions];
+          try {
+            localStorage.setItem('mt5_positions', JSON.stringify(combined));
+          } catch {}
+          return combined;
+        });
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, posPath);
+      }
+    );
+
+    return () => unsub();
+  }, [currentUser, activeAccount?.id]);
+
+  // Sync deals/history for active account from Firestore
+  useEffect(() => {
+    if (!currentUser || !activeAccount?.id) return;
+    const userId = currentUser.uid;
+    const accountId = activeAccount.id;
+    const dealsPath = `users/${userId}/accounts/${accountId}/deals`;
+    const dealsColRef = collection(db, 'users', userId, 'accounts', accountId, 'deals');
+
+    const unsub = onSnapshot(
+      dealsColRef,
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const remoteDeals: Deal[] = [];
+          snapshot.forEach((docSnap) => {
+            remoteDeals.push(docSnap.data() as Deal);
+          });
+
+          setHistoryDeals((prev) => {
+            const otherDeals = prev.filter((d) => d.accountId && d.accountId !== accountId);
+            const combined = [...remoteDeals, ...otherDeals];
+            try {
+              localStorage.setItem('mt5_history_deals', JSON.stringify(combined));
+            } catch {}
+            return combined;
+          });
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, dealsPath);
+      }
+    );
+
+    return () => unsub();
+  }, [currentUser, activeAccount?.id]);
+
+  // Local storage persistence fallbacks
   useEffect(() => {
     try {
       localStorage.setItem('mt5_accounts', JSON.stringify(accounts));
-    } catch (e) {
-      console.warn('Failed to save accounts to localStorage', e);
-    }
+    } catch {}
   }, [accounts]);
 
   useEffect(() => {
@@ -423,75 +605,45 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
       if (activeAccount?.id) {
         localStorage.setItem('mt5_active_account_id', activeAccount.id);
       }
-    } catch (e) {
-      console.warn('Failed to save active account id to localStorage', e);
-    }
+    } catch {}
   }, [activeAccount]);
 
   useEffect(() => {
     try {
       localStorage.setItem('mt5_history_deals', JSON.stringify(historyDeals));
-    } catch (e) {
-      console.warn('Failed to save history deals to localStorage', e);
-    }
+    } catch {}
   }, [historyDeals]);
 
-  // Persist open positions to localStorage
   useEffect(() => {
     try {
       localStorage.setItem('mt5_positions', JSON.stringify(positions));
-    } catch (e) {
-      console.warn('Failed to save positions to localStorage', e);
-    }
+    } catch {}
   }, [positions]);
 
-  // Save all critical states reliably on mobile app hide / close / beforeunload
+  // Save states on mobile app background/exit
   useEffect(() => {
     const saveAllState = () => {
       try {
+        localStorage.setItem('mt5_accounts', JSON.stringify(accounts));
+        if (activeAccount?.id) localStorage.setItem('mt5_active_account_id', activeAccount.id);
         localStorage.setItem('mt5_positions', JSON.stringify(positions));
         localStorage.setItem('mt5_history_deals', JSON.stringify(historyDeals));
-        localStorage.setItem('mt5_accounts', JSON.stringify(accounts));
-        if (activeAccount?.id) {
-          localStorage.setItem('mt5_active_account_id', activeAccount.id);
-        }
-      } catch (e) {
-        console.warn('Failed to save state on app hide', e);
-      }
+      } catch {}
     };
 
     window.addEventListener('beforeunload', saveAllState);
     window.addEventListener('pagehide', saveAllState);
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        saveAllState();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') saveAllState();
+    });
 
     return () => {
       window.removeEventListener('beforeunload', saveAllState);
       window.removeEventListener('pagehide', saveAllState);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [positions, historyDeals, accounts, activeAccount]);
+  }, [accounts, activeAccount, positions, historyDeals]);
 
-  const [messages, setMessages] = useState<MessageItem[]>(INITIAL_MESSAGES);
-  const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
-  const [isSimulatorFrame, setIsSimulatorFrame] = useState<boolean>(true);
-  
-  // Modals
-  const [orderModalSymbol, setOrderModalSymbol] = useState<string | null>(null);
-  const [accountInfoModalOpen, setAccountInfoModalOpen] = useState<boolean>(false);
-  const [otpModalOpen, setOtpModalOpen] = useState<boolean>(false);
-  const [addAccountModalOpen, setAddAccountModalOpen] = useState<boolean>(false);
-
-  // Switch active account and adjust balance
-  const setActiveAccount = (account: Account) => {
-    setActiveAccountState(account);
-  };
-
-  // Live Binance WebSocket + REST Connection for BTCUSD
+  // Connect to Binance live WebSocket for BTCUSD
   useEffect(() => {
     let ws: WebSocket | null = null;
     let reconnectTimeout: any = null;
@@ -499,7 +651,6 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     const connectBinance = () => {
       try {
-        // 1. Initial snapshot from Binance REST API immediately
         fetch('https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT')
           .then((res) => res.json())
           .then((data) => {
@@ -530,22 +681,14 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
             );
             setIsBinanceConnected(true);
           })
-          .catch((err) => {
-            console.log('Binance REST fetch fallback', err);
-          });
+          .catch(() => {});
 
-        // 2. Connect to Binance live ticker WebSocket stream
         ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@ticker');
-
-        ws.onopen = () => {
-          setIsBinanceConnected(true);
-        };
-
+        ws.onopen = () => setIsBinanceConnected(true);
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
             if (!data || !data.c) return;
-
             const newBid = parseFloat(data.b || data.c);
             const newAsk = parseFloat(data.a || (parseFloat(data.c) + 1.5).toFixed(2));
             const newHigh = parseFloat(data.h || data.c);
@@ -571,107 +714,169 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
                 };
               })
             );
-          } catch (e) {
-            // ignore JSON parse error
-          }
+          } catch {}
         };
-
-        ws.onerror = () => {
-          // silently handle socket error
-        };
-
         ws.onclose = () => {
           if (!isCancelled) {
             setIsBinanceConnected(false);
             reconnectTimeout = setTimeout(connectBinance, 3000);
           }
         };
-      } catch (err) {
-        if (!isCancelled) {
-          reconnectTimeout = setTimeout(connectBinance, 5000);
-        }
+      } catch {
+        if (!isCancelled) reconnectTimeout = setTimeout(connectBinance, 5000);
       }
     };
 
     connectBinance();
-
     return () => {
       isCancelled = true;
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      if (ws) {
-        ws.close();
-      }
+      if (ws) ws.close();
     };
   }, []);
 
-  // Live Twelve Data API feed for Gold (XAUUSD) & Silver (XAGUSD)
+  // Live real market quotes for Silver (XAGUSD), Oil (USOIL), and Gold (XAUUSD)
   useEffect(() => {
-    const TWELVE_DATA_KEY = 'f348542a01f64309aeb042123ffccf54';
     let isCancelled = false;
 
-    const fetchMetals = () => {
-      fetch(`https://api.twelvedata.com/quote?symbol=XAU/USD,SLV&apikey=${TWELVE_DATA_KEY}`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (isCancelled || !data) return;
+    const fetchRealCommodities = async () => {
+      try {
+        const now = new Date();
+        const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
-          const now = new Date();
-          const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+        // 1. Try backend proxy route for real COMEX & NYMEX quotes
+        const res = await fetch('/api/commodities');
+        if (res.ok) {
+          const data = await res.json();
+          if (isCancelled || !data) return;
 
           setQuotes((prev) =>
             prev.map((q) => {
-              // 1. Gold XAUUSD from Twelve Data
-              if (q.symbol === 'XAUUSD' && data['XAU/USD'] && data['XAU/USD'].close) {
-                const gold = data['XAU/USD'];
-                const price = parseFloat(gold.close);
+              if (q.symbol === 'XAGUSD' && data['XAGUSD']) {
+                const s = data['XAGUSD'];
+                const price = Number(s.price);
                 const isUp = price >= q.bid;
-                const high = parseFloat(gold.high) || Math.max(q.high, price);
-                const low = parseFloat(gold.low) || Math.min(q.low, price);
-                const change = parseFloat(gold.percent_change) || q.change;
-                return {
-                  ...q,
-                  bid: parseFloat(price.toFixed(2)),
-                  ask: parseFloat((price + 0.20).toFixed(2)),
-                  high,
-                  low,
-                  change,
-                  time: timeStr,
-                  tickDirection: isUp ? 'up' : 'down'
-                };
-              }
-
-              // 2. Silver XAGUSD from Twelve Data (SLV / Silver Spot)
-              if (q.symbol === 'XAGUSD' && data['SLV'] && data['SLV'].close) {
-                const silver = data['SLV'];
-                const price = parseFloat(silver.close);
-                const isUp = price >= q.bid;
-                const high = parseFloat(silver.high) || Math.max(q.high, price);
-                const low = parseFloat(silver.low) || Math.min(q.low, price);
-                const change = parseFloat(silver.percent_change) || q.change;
                 return {
                   ...q,
                   bid: parseFloat(price.toFixed(3)),
                   ask: parseFloat((price + 0.015).toFixed(3)),
-                  high,
-                  low,
-                  change,
+                  high: s.high ? parseFloat(Number(s.high).toFixed(3)) : q.high,
+                  low: s.low ? parseFloat(Number(s.low).toFixed(3)) : q.low,
+                  change: s.change ? parseFloat(Number(s.change).toFixed(2)) : q.change,
                   time: timeStr,
-                  tickDirection: isUp ? 'up' : 'down'
+                  tickDirection: isUp ? 'up' : 'down',
+                  source: 'COMEX Realtime'
+                };
+              }
+
+              if (q.symbol === 'USOIL' && data['USOIL']) {
+                const o = data['USOIL'];
+                const price = Number(o.price);
+                const isUp = price >= q.bid;
+                return {
+                  ...q,
+                  bid: parseFloat(price.toFixed(2)),
+                  ask: parseFloat((price + 0.03).toFixed(2)),
+                  high: o.high ? parseFloat(Number(o.high).toFixed(2)) : q.high,
+                  low: o.low ? parseFloat(Number(o.low).toFixed(2)) : q.low,
+                  change: o.change ? parseFloat(Number(o.change).toFixed(2)) : q.change,
+                  time: timeStr,
+                  tickDirection: isUp ? 'up' : 'down',
+                  source: 'NYMEX Realtime'
+                };
+              }
+
+              if (q.symbol === 'XAUUSD' && data['XAUUSD']) {
+                const g = data['XAUUSD'];
+                const price = Number(g.price);
+                const isUp = price >= q.bid;
+                return {
+                  ...q,
+                  bid: parseFloat(price.toFixed(2)),
+                  ask: parseFloat((price + 0.20).toFixed(2)),
+                  high: g.high ? parseFloat(Number(g.high).toFixed(2)) : q.high,
+                  low: g.low ? parseFloat(Number(g.low).toFixed(2)) : q.low,
+                  change: g.change ? parseFloat(Number(g.change).toFixed(2)) : q.change,
+                  time: timeStr,
+                  tickDirection: isUp ? 'up' : 'down',
+                  source: 'COMEX Realtime'
                 };
               }
 
               return q;
             })
           );
-        })
-        .catch((err) => {
-          console.log('Twelve Data metals fetch error:', err);
-        });
+          return;
+        }
+      } catch {
+        // Fallback to direct client-side open APIs
+      }
+
+      // Fallback 1: Spot Silver from Currency CDN API
+      try {
+        const silverRes = await fetch('https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/xag.json');
+        if (silverRes.ok) {
+          const sData = await silverRes.json();
+          if (!isCancelled && sData?.xag?.usd) {
+            const price = parseFloat(sData.xag.usd);
+            const now = new Date();
+            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+            setQuotes((prev) =>
+              prev.map((q) => {
+                if (q.symbol !== 'XAGUSD') return q;
+                const isUp = price >= q.bid;
+                return {
+                  ...q,
+                  bid: parseFloat(price.toFixed(3)),
+                  ask: parseFloat((price + 0.015).toFixed(3)),
+                  high: Math.max(q.high, price),
+                  low: Math.min(q.low, price),
+                  time: timeStr,
+                  tickDirection: isUp ? 'up' : 'down',
+                  source: 'Spot Realtime'
+                };
+              })
+            );
+          }
+        }
+      } catch {}
+
+      // Fallback 2: TwelveData for Gold XAU/USD
+      try {
+        const TWELVE_DATA_KEY = 'f348542a01f64309aeb042123ffccf54';
+        const goldRes = await fetch(`https://api.twelvedata.com/quote?symbol=XAU/USD&apikey=${TWELVE_DATA_KEY}`);
+        if (goldRes.ok) {
+          const gData = await goldRes.json();
+          if (!isCancelled && gData?.close) {
+            const price = parseFloat(gData.close);
+            const now = new Date();
+            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+            setQuotes((prev) =>
+              prev.map((q) => {
+                if (q.symbol !== 'XAUUSD') return q;
+                const isUp = price >= q.bid;
+                return {
+                  ...q,
+                  bid: parseFloat(price.toFixed(2)),
+                  ask: parseFloat((price + 0.20).toFixed(2)),
+                  high: parseFloat(gData.high) || Math.max(q.high, price),
+                  low: parseFloat(gData.low) || Math.min(q.low, price),
+                  change: parseFloat(gData.percent_change) || q.change,
+                  time: timeStr,
+                  tickDirection: isUp ? 'up' : 'down',
+                  source: 'Twelve Data'
+                };
+              })
+            );
+          }
+        }
+      } catch {}
     };
 
-    fetchMetals();
-    // Poll every 30 seconds to respect Twelve Data free limits
-    const intervalId = setInterval(fetchMetals, 30000);
+    fetchRealCommodities();
+    const intervalId = setInterval(fetchRealCommodities, 10000);
 
     return () => {
       isCancelled = true;
@@ -679,24 +884,20 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
     };
   }, []);
 
-  // Live ticking simulation for forex/metals (BTCUSD excluded as it has Binance live feed!)
+  // Realistic micro-ticking for market activity
   useEffect(() => {
     const interval = setInterval(() => {
       setQuotes((prevQuotes) =>
         prevQuotes.map((q) => {
-          // BTCUSD is connected live to Binance WebSocket!
           if (q.symbol === 'BTCUSD') return q;
-
-          // 40% chance of ticking
           if (Math.random() > 0.45) return q;
 
           const isUp = Math.random() > 0.49;
           const pipSize = Math.pow(10, -q.digits);
           const delta = (isUp ? 1 : -1) * (Math.floor(Math.random() * 3) + 1) * pipSize;
-          
+
           let newBid = parseFloat((q.bid + delta).toFixed(q.digits));
           let newAsk = parseFloat((newBid + q.spread * pipSize).toFixed(q.digits));
-
           const newHigh = Math.max(q.high, newAsk);
           const newLow = Math.min(q.low, newBid);
 
@@ -714,7 +915,7 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
           };
         })
       );
-    }, 850);
+    }, 1200);
 
     return () => clearInterval(interval);
   }, []);
@@ -730,22 +931,18 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
         let profit = 0;
 
         if (pos.symbol === 'XAUUSD') {
-          // Gold: 1 lot = 100 oz. Difference * 100 * lots
           profit = pos.type === 'buy'
             ? (currentPrice - pos.openPrice) * 100 * pos.lots
             : (pos.openPrice - currentPrice) * 100 * pos.lots;
         } else if (pos.symbol === 'USOIL' || pos.symbol === 'USOILm') {
-          // Crude Oil: 1 lot = 1,000 barrels. Difference * 1000 * lots
           profit = pos.type === 'buy'
             ? (currentPrice - pos.openPrice) * 1000 * pos.lots
             : (pos.openPrice - currentPrice) * 1000 * pos.lots;
         } else if (pos.symbol === 'XAGUSD') {
-          // Silver: 1 lot = 5000 oz. Difference * 5000 * lots
           profit = pos.type === 'buy'
             ? (currentPrice - pos.openPrice) * 5000 * pos.lots
             : (pos.openPrice - currentPrice) * 5000 * pos.lots;
         } else if (pos.symbol === 'BTCUSD') {
-          // BTC: 1 lot = 1 BTC
           profit = pos.type === 'buy'
             ? (currentPrice - pos.openPrice) * pos.lots
             : (pos.openPrice - currentPrice) * pos.lots;
@@ -754,14 +951,12 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
             ? ((currentPrice - pos.openPrice) / currentPrice) * 100000 * pos.lots
             : ((pos.openPrice - currentPrice) / currentPrice) * 100000 * pos.lots;
         } else {
-          // Standard forex pair: 1 lot = 100,000 units
           profit = pos.type === 'buy'
             ? (currentPrice - pos.openPrice) * 100000 * pos.lots
             : (pos.openPrice - currentPrice) * 100000 * pos.lots;
         }
 
         const netProfit = parseFloat((profit + pos.swap + pos.commission).toFixed(2));
-
         return {
           ...pos,
           currentPrice,
@@ -771,14 +966,13 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
     );
   }, [quotes]);
 
-  // Financial calculations scoped to active account
+  // Financial calculations strictly scoped to active account
   const accountPositions = positions.filter(
     (p) => !p.accountId || p.accountId === activeAccount.id
   );
   const totalProfit = accountPositions.reduce((sum, p) => sum + p.profit, 0);
   const equity = parseFloat((activeAccount.balance + totalProfit).toFixed(2));
-  
-  // Calculate margin used (assuming 1:2000 leverage for Real Exness, 1:100 for Demo)
+
   const leverageRatio = activeAccount.leverage === '1:2000' ? 2000 : 100;
   const margin = parseFloat(
     accountPositions
@@ -799,7 +993,7 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
   const freeMargin = parseFloat((equity - margin).toFixed(2));
   const marginLevel = margin > 0 ? parseFloat(((equity / margin) * 100).toFixed(2)) : 0;
 
-  // Open a new trade
+  // Open a new trade (saves locally + writes to Firestore)
   const openTrade = useCallback(
     (symbol: string, type: 'buy' | 'sell', lots: number, sl?: number, tp?: number) => {
       const quote = quotes.find((q) => q.symbol === symbol);
@@ -822,7 +1016,7 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
         tp,
         swap: 0,
         commission,
-        profit: commission, // initially minus commission
+        profit: commission,
         openTime,
         accountId: activeAccount.id
       };
@@ -834,12 +1028,28 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
         } catch {}
         return updated;
       });
+
+      // Sync to cloud if user is authenticated
+      if (currentUser) {
+        const posDocRef = doc(db, 'users', currentUser.uid, 'accounts', activeAccount.id, 'positions', newPos.id);
+        const payload: Record<string, any> = {
+          ...newPos,
+          userId: currentUser.uid
+        };
+        if (newPos.sl === undefined) delete payload.sl;
+        if (newPos.tp === undefined) delete payload.tp;
+
+        setDoc(posDocRef, payload).catch((err) =>
+          handleFirestoreError(err, OperationType.WRITE, `users/${currentUser.uid}/accounts/${activeAccount.id}/positions/${newPos.id}`)
+        );
+      }
+
       return true;
     },
-    [quotes, activeAccount.id]
+    [quotes, activeAccount.id, currentUser]
   );
 
-  // Close position and record deal in history
+  // Close position and record deal in history (saves locally + updates Firestore)
   const closePosition = useCallback(
     (positionId: string) => {
       const pos = positions.find((p) => p.id === positionId);
@@ -867,7 +1077,7 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
         comment: ''
       };
 
-      // Add to history and persist immediately
+      // Add to history
       setHistoryDeals((prev) => {
         const updated = [newDeal, ...prev];
         try {
@@ -876,7 +1086,7 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
         return updated;
       });
 
-      // Remove from active positions and persist immediately
+      // Remove from open positions
       setPositions((prev) => {
         const updated = prev.filter((p) => p.id !== positionId);
         try {
@@ -885,39 +1095,77 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
         return updated;
       });
 
-      // Update active account balance and persist immediately
-      setActiveAccountState((prev) => {
-        const newBalance = parseFloat((prev.balance + pos.profit).toFixed(2));
-        const updated = { ...prev, balance: newBalance };
-        // Sync in accounts list
-        setAccounts((accs) => {
-          const updatedAccs = accs.map((a) => (a.id === updated.id ? updated : a));
-          try {
-            localStorage.setItem('mt5_accounts', JSON.stringify(updatedAccs));
-          } catch {}
-          return updatedAccs;
-        });
-        return updated;
+      // Update active account balance
+      const newBalance = parseFloat((activeAccount.balance + pos.profit).toFixed(2));
+      const updatedAccount = { ...activeAccount, balance: newBalance };
+
+      setActiveAccountState(updatedAccount);
+      setAccounts((accs) => {
+        const updatedAccs = accs.map((a) => (a.id === updatedAccount.id ? updatedAccount : a));
+        try {
+          localStorage.setItem('mt5_accounts', JSON.stringify(updatedAccs));
+        } catch {}
+        return updatedAccs;
       });
+
+      // Sync to cloud if user is authenticated
+      if (currentUser) {
+        const userId = currentUser.uid;
+        // 1. Delete position from cloud
+        const posDocRef = doc(db, 'users', userId, 'accounts', activeAccount.id, 'positions', positionId);
+        deleteDoc(posDocRef).catch((err) =>
+          handleFirestoreError(err, OperationType.DELETE, `users/${userId}/accounts/${activeAccount.id}/positions/${positionId}`)
+        );
+
+        // 2. Add deal to history in cloud
+        const dealDocRef = doc(db, 'users', userId, 'accounts', activeAccount.id, 'deals', newDeal.id);
+        const dealPayload: Record<string, any> = {
+          ...newDeal,
+          userId
+        };
+        if (newDeal.sl === undefined) delete dealPayload.sl;
+        if (newDeal.tp === undefined) delete dealPayload.tp;
+
+        setDoc(dealDocRef, dealPayload).catch((err) =>
+          handleFirestoreError(err, OperationType.WRITE, `users/${userId}/accounts/${activeAccount.id}/deals/${newDeal.id}`)
+        );
+
+        // 3. Update account balance in cloud
+        const accDocRef = doc(db, 'users', userId, 'accounts', activeAccount.id);
+        setDoc(accDocRef, { ...updatedAccount, userId }, { merge: true }).catch((err) =>
+          handleFirestoreError(err, OperationType.UPDATE, `users/${userId}/accounts/${activeAccount.id}`)
+        );
+      }
     },
-    [positions, activeAccount.id]
+    [positions, activeAccount, currentUser]
   );
 
   // Modify SL / TP
-  const modifyPosition = useCallback((positionId: string, sl?: number, tp?: number) => {
-    setPositions((prev) => {
-      const updated = prev.map((p) => (p.id === positionId ? { ...p, sl, tp } : p));
-      try {
-        localStorage.setItem('mt5_positions', JSON.stringify(updated));
-      } catch {}
-      return updated;
-    });
-  }, []);
+  const modifyPosition = useCallback(
+    (positionId: string, sl?: number, tp?: number) => {
+      setPositions((prev) => {
+        const updated = prev.map((p) => (p.id === positionId ? { ...p, sl, tp } : p));
+        try {
+          localStorage.setItem('mt5_positions', JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
+
+      if (currentUser && activeAccount?.id) {
+        const posDocRef = doc(db, 'users', currentUser.uid, 'accounts', activeAccount.id, 'positions', positionId);
+        const updates: any = {};
+        if (sl !== undefined) updates.sl = sl;
+        if (tp !== undefined) updates.tp = tp;
+        setDoc(posDocRef, updates, { merge: true }).catch((err) =>
+          handleFirestoreError(err, OperationType.UPDATE, `users/${currentUser.uid}/accounts/${activeAccount.id}/positions/${positionId}`)
+        );
+      }
+    },
+    [currentUser, activeAccount?.id]
+  );
 
   const markMessageAsRead = (id: string) => {
-    setMessages((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, read: true } : m))
-    );
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, read: true } : m)));
   };
 
   const unreadCount = messages.filter((m) => !m.read).length;
@@ -930,6 +1178,7 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
     setOrderModalSymbol(null);
   };
 
+  // Add new account (persists locally + cloud)
   const addNewAccount = (acc: Partial<Account>) => {
     const isExness = acc.broker?.toLowerCase().includes('exness') || acc.logoType === 'exness';
     const initialBalance = acc.balance !== undefined && !isNaN(acc.balance) ? Number(acc.balance) : 1000;
@@ -950,7 +1199,6 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
       lastKnownLabel: `آخر ما عرف . ${acc.currency || 'USD'}`
     };
 
-    // Add Initial Deposit Record into History: "يضاف المبلغ المبدأي في السجل ويكتب رصيد الحساب والرصيد باللون الازرق"
     const depositDeal: Deal = {
       id: `deposit-${Date.now()}`,
       ticket: Math.floor(10000000 + Math.random() * 89999999),
@@ -972,8 +1220,23 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
     setActiveAccountState(newAcc);
     setHistoryDeals((prev) => [depositDeal, ...prev]);
     setAddAccountModalOpen(false);
+
+    // Sync to cloud if user is authenticated
+    if (currentUser) {
+      const userId = currentUser.uid;
+      const accDocRef = doc(db, 'users', userId, 'accounts', newAcc.id);
+      setDoc(accDocRef, { ...newAcc, userId }).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `users/${userId}/accounts/${newAcc.id}`)
+      );
+
+      const dealDocRef = doc(db, 'users', userId, 'accounts', newAcc.id, 'deals', depositDeal.id);
+      setDoc(dealDocRef, { ...depositDeal, userId }).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `users/${userId}/accounts/${newAcc.id}/deals/${depositDeal.id}`)
+      );
+    }
   };
 
+  // Delete account (persists locally + cloud)
   const deleteAccount = (accountId: string) => {
     setAccounts((prev) => {
       const remaining = prev.filter((a) => a.id !== accountId);
@@ -987,6 +1250,33 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
       }
       return remaining;
     });
+
+    if (currentUser) {
+      const accDocRef = doc(db, 'users', currentUser.uid, 'accounts', accountId);
+      deleteDoc(accDocRef).catch((err) =>
+        handleFirestoreError(err, OperationType.DELETE, `users/${currentUser.uid}/accounts/${accountId}`)
+      );
+    }
+  };
+
+  const setActiveAccount = (account: Account) => {
+    setActiveAccountState(account);
+  };
+
+  const handleSignInWithGoogle = async () => {
+    try {
+      await loginWithGoogle();
+    } catch (e) {
+      console.error('Google Sign-in failed', e);
+    }
+  };
+
+  const handleSignOutUser = async () => {
+    try {
+      await logoutUser();
+    } catch (e) {
+      console.error('Sign-out failed', e);
+    }
   };
 
   return (
@@ -1030,7 +1320,12 @@ export const TradingProvider: React.FC<{ children: ReactNode }> = ({ children })
         setAddAccountModalOpen,
         addNewAccount,
         deleteAccount,
-        isBinanceConnected
+        isBinanceConnected,
+        currentUser,
+        isAuthReady,
+        isCloudSynced,
+        signInWithGoogle: handleSignInWithGoogle,
+        signOutUser: handleSignOutUser
       }}
     >
       {children}

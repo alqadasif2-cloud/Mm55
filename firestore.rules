@@ -1,0 +1,53 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // User profile document
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId) && isValidId(userId);
+      allow delete: if false;
+
+      // Trading Accounts subcollection
+      match /accounts/{accountId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(accountId) && request.resource.data.userId == userId;
+        allow update: if isOwner(userId) && request.resource.data.userId == userId;
+        allow delete: if isOwner(userId);
+
+        // Open Positions subcollection (isolated per account)
+        match /positions/{positionId} {
+          allow read: if isOwner(userId);
+          allow create: if isOwner(userId) && isValidId(positionId) && request.resource.data.userId == userId && request.resource.data.accountId == accountId;
+          allow update: if isOwner(userId) && request.resource.data.userId == userId && request.resource.data.accountId == accountId;
+          allow delete: if isOwner(userId);
+        }
+
+        // Closed Deals and Deposit History subcollection (isolated per account)
+        match /deals/{dealId} {
+          allow read: if isOwner(userId);
+          allow create: if isOwner(userId) && isValidId(dealId) && request.resource.data.userId == userId && request.resource.data.accountId == accountId;
+          allow update: if isOwner(userId) && request.resource.data.userId == userId && request.resource.data.accountId == accountId;
+          allow delete: if isOwner(userId);
+        }
+      }
+    }
+  }
+}
